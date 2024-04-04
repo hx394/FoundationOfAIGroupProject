@@ -11,16 +11,18 @@ AGENT_NUMBER = 1
 rom_path = './AutoROM'
 
 env = boxing_v2.parallel_env(render_mode="human", auto_rom_install_path=rom_path)
-nS=100800
+nS=25804800
 nA=18
 nP=2
 
-def to1D(observation):
+def to1D(observation,agent):
+    print(observation)
     value=0
     for i in range(210):
         for j in range(160):
-            value=value+observation[i,j]*210*160+j*210+i;
-
+            for k in range(3):
+                value=value+observation[agent][i,j,k]*210*160*3+k*210*160+j*210+i;
+                           
     return value
 
 def q_learning(num_episodes, checkpoints):
@@ -31,6 +33,8 @@ def q_learning(num_episodes, checkpoints):
 
     gamma = 0.9
     epsilon = 0.9
+    
+    players=["first_0","second_0"]
 
     observation, info = env.reset()
 
@@ -43,7 +47,7 @@ def q_learning(num_episodes, checkpoints):
         #actionList=[]
         observation, info = env.reset()
         while True:
-            oldOBS=to1D(observation)
+            oldOBS={"first_0":to1D(observation,"first_0"),"second_0":to1D(observation,"second_0")}
             actions={}
             actionListForPlayers=[]
             
@@ -59,10 +63,10 @@ def q_learning(num_episodes, checkpoints):
                     currentMax=float('-inf')
                     maxOptions=[]
                     for k in range(18):
-                        if Q[i][to1D(observation)][k]>currentMax:
-                            currentMax=Q[i][to1D(observation)][k]
+                        if Q[i][to1D(observation,players[i])][k]>currentMax:
+                            currentMax=Q[i][to1D(observation,players[i])][k]
                             maxOptions=[k]
-                        elif Q[i][to1D(observation)][k]==currentMax:
+                        elif Q[i][to1D(observation,players[i])][k]==currentMax:
                             maxOptions.append(k)
                     action=maxOptions[0]
                 currentAgent=env.agents[i]
@@ -74,17 +78,17 @@ def q_learning(num_episodes, checkpoints):
             observation, reward, terminated, truncated, info = env.step(actions)
             
             for i in range(nP):
-                eta=1/(1+num_updates[i][oldOBS][actionListForPlayers[i]])
+                eta=1/(1+num_updates[i][oldOBS[players[i]]][actionListForPlayers[i]])
                 currentAgent=env.agents[i]
-                Q[i][oldOBS][actionListForPlayers[i]]=(1-eta)*Q[i][oldOBS][actionListForPlayers[i]]+eta*(reward[currentAgent]+gamma*V[i][to1D(observation)])
-                num_updates[i][oldOBS][actionListForPlayers[i]]+=1
+                Q[i][oldOBS[currentAgent]][actionListForPlayers[i]]=(1-eta)*Q[i][oldOBS[currentAgent]][actionListForPlayers[i]]+eta*(reward[currentAgent]+gamma*V[i][to1D(observation,players[i])])
+                num_updates[i][oldOBS[currentAgent]][actionListForPlayers[i]]+=1
                 max_value=float('-inf')
             
                 for k in range(nA):
-                    if Q[i][oldOBS][k]>max_value:
-                        V[i][oldOBS]=Q[i][oldOBS][k]
-                        optimal_policy[i][oldOBS]=k
-                        max_value=Q[i][oldOBS][k]
+                    if Q[i][oldOBS[currentAgent]][k]>max_value:
+                        V[i][oldOBS[currentAgent]]=Q[i][oldOBS[currentAgent]][k]
+                        optimal_policy[i][oldOBS[currentAgent]]=k
+                        max_value=Q[i][oldOBS[currentAgent]][k]
             if terminated or truncated:
                 #print(actionList)
                 break
