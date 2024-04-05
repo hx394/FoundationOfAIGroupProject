@@ -31,19 +31,22 @@ def preprocess_state(state):
     return transform(state).unsqueeze(0)
 
 # Define the Q-network with convolutional layers
+        
 class QNetwork(nn.Module):
     def __init__(self, action_size):
         super(QNetwork, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
-        self.fc1 = nn.Linear(7*7*64, 512)
-        self.fc2 = nn.Linear(512, action_size)
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=8, stride=4)  # 输出尺寸: (84-8)/4 + 1 = 20
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)      # 输出尺寸: 20/2 = 10
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2) # 输出尺寸: (10-4)/2 + 1 = 4
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)      # 输出尺寸: 4/2 = 2
+        self.fc1 = nn.Linear(2*2*64, 48)  # 根据最终的特征图尺寸调整全连接层的输入尺寸
+        self.fc2 = nn.Linear(48, action_size)
 
     def forward(self, x):
         x = torch.relu(self.conv1(x))
+        x = self.pool1(x)
         x = torch.relu(self.conv2(x))
-        x = torch.relu(self.conv3(x))
+        x = self.pool2(x)
         x = x.view(x.size(0), -1)
         x = torch.relu(self.fc1(x))
         return self.fc2(x)
@@ -156,6 +159,7 @@ for episode in range(num_episodes):
         target_networks.load_state_dict(q_networks.state_dict())
 
     print(f"Episode: {episode + 1}, Total Rewards: {total_rewards}")
+    torch.save(q_networks.state_dict(), 'q_networks.pth')
 
 env.close()
 
