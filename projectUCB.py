@@ -61,6 +61,7 @@ class MultiAgentQNetwork(nn.Module):
     def forward(self, x, agent_index):
         return self.networks[agent_index](x)
 
+
 # Hyperparameters
 state_size = (84, 84)
 learning_rate = 0.25
@@ -77,90 +78,117 @@ env = boxing_v2.parallel_env(render_mode="human",auto_rom_install_path=rom_path)
 num_agents = 2  # Assuming we have 2 agents
 action_size = env.action_space(env.possible_agents[0]).n
 
+# UCB parameters
+UCB_C = 1.0
+
 # Initialize networks and memory for each agent
 q_networks = MultiAgentQNetwork(action_size, num_agents).float()
-target_networks = MultiAgentQNetwork(action_size, num_agents).float()
 try:
-    q_networks.load_state_dict(torch.load('q_networks.pth'))
+     q_networks.load_state_dict(torch.load('q_networks.pth'))
 except FileNotFoundError:
-    print("FileNotFoundError！")
+     print("FileNotFoundError！")
 except RuntimeError as e:
-    print(f"RuntimeError：{e}")
+     print(f"RuntimeError：{e}")
+target_networks = MultiAgentQNetwork(action_size, num_agents).float()
 target_networks.load_state_dict(q_networks.state_dict())
 memories = [deque(maxlen=memory_size) for _ in range(num_agents)]
 
 # Helper function to choose an action based on epsilon-greedy policy
-def choose_action(state, agent,epsilon):
-    
-    # epsilon是执行随机动作的概率
-    if agent == "second_0" or np.random.random() < epsilon:
-        # 对于agent2，以epsilon的概率随机选择一个动作
-    
-        return env.action_space(agent).sample()
+def choose_action(state, agent, epsilon):
+    if np.random.rand() <= epsilon or agent=='second_0':
+        return env.action_space(env.possible_agents[0]).sample()
     else:
-        # 否则，根据模型预测选择动作
         with torch.no_grad():
-            q_values = q_networks(state, 0)
-     
+            q_values = q_networks(state, 0)  # Using the first network for action selection
         return q_values.argmax().item()
+
+# Helper function to choose an action based on UCB policy
+def choose_ucb_action(state, agent_index):
+    q_values = q_networks(state, 0).detach().cpu().numpy()  # get Q_value
+    agent_action_counts = action_counts[agent_index, :]
+    
+    # avoid using 0 as divisor
+    safe_counts = np.where(agent_action_counts == 0, 1e-1, agent_action_counts)
+    
+    total_counts = np.sum(safe_counts)
+    divisor = np.log(total_counts) / safe_counts
+    divisor = np.maximum(divisor, 0)
+    ucb_values = q_values + UCB_C * np.sqrt(divisor)
+    action = np.argmax(ucb_values)
+    
+    return action, q_values[0, action]
 
 # Training loop for multiple agents
 for episode in range(num_episodes):
     observations_tuple = env.reset()
     observations = observations_tuple[0]  # Extract the observations from the first element of the tuple
     states = {agent: preprocess_state(observations[agent]) for agent in env.agents}
-    total_rewards = {agent: 0 for agent in env.agents}
+    # total_rewards = {agent: 0 for agent in env.agents}
+    # counts and rewards for UCB
+    action_counts = np.zeros((num_agents, action_size))
+    total_rewards = np.zeros((num_agents, action_size))
 
     while True:
         actions = {}
         for agent_index, agent in enumerate(env.agents):
-            action = choose_action(states[agent], agent, epsilon)
+            # action = choose_action(states[agent], epsilon)
+            if agent_index == 0:
+                action, q_value = choose_ucb_action(states[agent], agent_index)
+            else:
+                action = env.action_space(env.possible_agents[0]).sample()
+                
+                #q_value = q_networks(states[agent], 0).detach().cpu().numpy()[0, action]
             actions[agent] = action
+                
+            # update action counts and rewards in UCB policy
+            action_counts[agent_index, action] += 1
+            if agent_index==0:
+                total_rewards[agent_index, action] += q_value
 
         next_observations_tuple, rewards, dones, truncations, infos = env.step(actions)
         next_observations = next_observations_tuple  # Extract the observations from the first element of the tuple
         next_states = {agent: preprocess_state(next_observations[agent]) for agent in env.agents}
 
-        for agent_index, agent in enumerate(env.agents):
-            if agent=="second_0":
-                break
-            memory = memories[agent_index]
-            state = states[agent]
-            action = actions[agent]
-            reward = rewards[agent]
-            if reward>0:
-                reward=reward*2
-            next_state = next_states[agent]
-            done = dones[agent] or truncations[agent]
-            total_rewards[agent] += reward
+        
+        agent_index=0
+        agent ="first_0"
+        memory = memories[agent_index]
+        state = states[agent]
+        action = actions[agent]
+        reward = rewards[agent]
+        if reward>0:
+            reward=reward*2
+        next_state = next_states[agent]
+        done = dones[agent] or truncations[agent]
+        # total_rewards[agent] += reward
 
-            # Store the experience in memory
-            memory.append((state, action, reward, next_state, done))
+        # Store the experience in memory
+        memory.append((state, action, reward, next_state, done))
 
-            # Experience replay
-            if len(memory) >= batch_size:
-                batch = random.sample(memory, batch_size)
-                states_batch, actions_batch, rewards_batch, next_states_batch, dones_batch = zip(*batch)
-                states_batch = torch.cat(states_batch)
-                actions_batch = torch.tensor(actions_batch)
-                rewards_batch = torch.tensor(rewards_batch)
-                next_states_batch = torch.cat(next_states_batch)
-                dones_batch = torch.tensor(dones_batch)
+        # Experience replay
+        if len(memory) >= batch_size:
+            batch = random.sample(memory, batch_size)
+            states_batch, actions_batch, rewards_batch, next_states_batch, dones_batch = zip(*batch)
+            states_batch = torch.cat(states_batch)
+            actions_batch = torch.tensor(actions_batch)
+            rewards_batch = torch.tensor(rewards_batch)
+            next_states_batch = torch.cat(next_states_batch)
+            dones_batch = torch.tensor(dones_batch)
 
-                # Compute target Q-values
-                with torch.no_grad():
-                    next_q_values = target_networks(next_states_batch, agent_index).max(dim=1)[0]
-                    targets = rewards_batch + gamma * next_q_values * (~dones_batch)
+            # Compute target Q-values
+            with torch.no_grad():
+                next_q_values = target_networks(next_states_batch, agent_index).max(dim=1)[0]
+                targets = rewards_batch + gamma * next_q_values * (~dones_batch)
 
-                # Compute current Q-values
-                q_values = q_networks(states_batch, agent_index).gather(1, actions_batch.unsqueeze(1)).squeeze()
+            # Compute current Q-values
+            q_values = q_networks(states_batch, agent_index).gather(1, actions_batch.unsqueeze(1)).squeeze()
 
-                # Update the Q-network
-                optimizer = optim.Adam(q_networks.networks[agent_index].parameters(), lr=learning_rate)
-                loss = nn.functional.smooth_l1_loss(q_values, targets)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+            # Update the Q-network
+            optimizer = optim.Adam(q_networks.networks[agent_index].parameters(), lr=learning_rate)
+            loss = nn.functional.smooth_l1_loss(q_values, targets)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
         states = next_states
 
