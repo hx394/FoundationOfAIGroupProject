@@ -61,6 +61,7 @@ class MultiAgentQNetwork(nn.Module):
     def forward(self, x, agent_index):
         return self.networks[agent_index](x)
 
+
 # Hyperparameters
 state_size = (84, 84)
 learning_rate = 0.00025
@@ -77,6 +78,9 @@ env = boxing_v2.parallel_env(render_mode="human",auto_rom_install_path=rom_path)
 num_agents = 2  # Assuming we have 2 agents
 action_size = env.action_space(env.possible_agents[0]).n
 
+# UCB parameters
+UCB_C = 1.0
+
 # Initialize networks and memory for each agent
 q_networks = MultiAgentQNetwork(action_size, num_agents).float()
 target_networks = MultiAgentQNetwork(action_size, num_agents).float()
@@ -92,18 +96,46 @@ def choose_action(state, epsilon):
             q_values = q_networks(state, 0)  # Using the first network for action selection
         return q_values.argmax().item()
 
+# Helper function to choose an action based on UCB policy
+def choose_ucb_action(state, agent_index):
+    q_values = q_networks(state, 0).detach().cpu().numpy()  # get Q_value
+    agent_action_counts = action_counts[agent_index, :]
+    
+    # avoid using 0 as divisor
+    safe_counts = np.where(agent_action_counts == 0, 1e-1, agent_action_counts)
+    
+    total_counts = np.sum(safe_counts)
+    divisor = np.log(total_counts) / safe_counts
+    divisor = np.maximum(divisor, 0)
+    ucb_values = q_values + UCB_C * np.sqrt(divisor)
+    action = np.argmax(ucb_values)
+    
+    return action, q_values[0, action]
+
 # Training loop for multiple agents
 for episode in range(num_episodes):
     observations_tuple = env.reset()
     observations = observations_tuple[0]  # Extract the observations from the first element of the tuple
     states = {agent: preprocess_state(observations[agent]) for agent in env.agents}
-    total_rewards = {agent: 0 for agent in env.agents}
+    # total_rewards = {agent: 0 for agent in env.agents}
+    # counts and rewards for UCB
+    action_counts = np.zeros((num_agents, action_size))
+    total_rewards = np.zeros((num_agents, action_size))
 
     while True:
         actions = {}
         for agent_index, agent in enumerate(env.agents):
-            action = choose_action(states[agent], epsilon)
+            # action = choose_action(states[agent], epsilon)
+            if agent_index == 0:
+                action, q_value = choose_ucb_action(states[agent], agent_index)
+            else:
+                action = env.action_space(env.possible_agents[0]).sample()
+                q_value = q_networks(states[agent], 0).detach().cpu().numpy()[0, action]
             actions[agent] = action
+                
+            # update action counts and rewards in UCB policy
+            action_counts[agent_index, action] += 1
+            total_rewards[agent_index, action] += q_value
 
         next_observations_tuple, rewards, dones, truncations, infos = env.step(actions)
         next_observations = next_observations_tuple  # Extract the observations from the first element of the tuple
@@ -116,7 +148,7 @@ for episode in range(num_episodes):
             reward = rewards[agent]
             next_state = next_states[agent]
             done = dones[agent] or truncations[agent]
-            total_rewards[agent] += reward
+            # total_rewards[agent] += reward
 
             # Store the experience in memory
             memory.append((state, action, reward, next_state, done))
