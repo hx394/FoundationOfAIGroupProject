@@ -8,6 +8,7 @@ from torchvision import transforms
 from pettingzoo.atari import boxing_v2
 from pettingzoo.utils import wrappers
 import pickle
+import matplotlib.pyplot as plt
 
 rom_path = './AutoROM'
 
@@ -15,11 +16,11 @@ rom_path = './AutoROM'
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Set random seed for reproducibility
-torch.manual_seed(1)
-np.random.seed(1)
+#torch.manual_seed(1)
+#np.random.seed(1)
 
 # Create the environment
-env = boxing_v2.env(render_mode="human", auto_rom_install_path=rom_path)
+env = boxing_v2.env(render_mode=None, auto_rom_install_path=rom_path)
 #env = wrappers.CaptureStdoutWrapper(env)
 env = wrappers.AssertOutOfBoundsWrapper(env)
 env = wrappers.OrderEnforcingWrapper(env)
@@ -32,10 +33,11 @@ discount_rate = 0.99
 epsilon = 1.0
 epsilon_decay = 0.99
 epsilon_min = 0.01
-num_episodes = 100
+num_episodes = 500
 update_target_network_every = 1000
 replay_buffer_capacity = 1000
 batch_size = 32
+total_points=[]
 
 
 # Preprocessing function
@@ -155,7 +157,7 @@ if training_progress:
     q_network.load_state_dict(training_progress['q_network_state_dict'])
     target_network.load_state_dict(training_progress['target_network_state_dict'])
     epsilon = training_progress['epsilon']
-    
+    epsilon =0
     start_episode = training_progress['episode'] + 1
     replay_buffer = training_progress['replay_buffer']  # Load the replay buffer
     
@@ -201,8 +203,6 @@ for episode in range(start_episode, num_episodes):
                 get_points+=reward
                 print("Get points:",get_points)
                 reward=reward*1000
-            elif reward==0:
-                reward=-1
             elif reward<0:
                 lose_points-=reward
                 print("Lose points:",lose_points)
@@ -261,6 +261,16 @@ for episode in range(start_episode, num_episodes):
     # Epsilon decay
     if epsilon > epsilon_min:
         epsilon *= epsilon_decay
+    total_points.append(get_points)
+    with open('list.txt', 'w') as file:
+        for item in total_points:
+            file.write(f"{item}\n")
+    plt.plot(total_points)
+    plt.title("Points over episode")
+    plt.xlabel("Episode")
+    plt.ylabel("Point")
+    plt.savefig("deepQlearning.png")
+    plt.close()
     
     # Save training progress
     save_training_progress(q_network, target_network, epsilon, episode, replay_buffer)
