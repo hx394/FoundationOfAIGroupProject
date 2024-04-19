@@ -20,7 +20,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #np.random.seed(1)
 
 # Create the environment
-env = boxing_v2.env(render_mode=None, auto_rom_install_path=rom_path)
+env = boxing_v2.env(render_mode="human", auto_rom_install_path=rom_path)
 #env = wrappers.CaptureStdoutWrapper(env)
 env = wrappers.AssertOutOfBoundsWrapper(env)
 env = wrappers.OrderEnforcingWrapper(env)
@@ -33,7 +33,7 @@ discount_rate = 0.99
 epsilon = 1.0
 epsilon_decay = 0.99
 epsilon_min = 0.01
-num_episodes = 500
+num_episodes = 510
 update_target_network_every = 1000
 replay_buffer_capacity = 1000
 batch_size = 32

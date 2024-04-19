@@ -77,7 +77,7 @@ total_points = []
 discount_rate = 0.99
 
 # Environment setup
-env = boxing_v2.parallel_env(render_mode=None,auto_rom_install_path=rom_path)
+env = boxing_v2.parallel_env(render_mode="human",auto_rom_install_path=rom_path)
 num_agents = 2  # Assuming we have 2 agents
 action_size = env.action_space(env.possible_agents[0]).n
 
